@@ -27,6 +27,7 @@ class CInputCapturePortal {
   public:
     CInputCapturePortal(SP<CCHyprlandInputCaptureManagerV1> mgr);
     void zonesChanged();
+    bool hasSession(const sdbus::ObjectPath& sessionHandle) const;
 
   private:
     struct {
@@ -34,13 +35,15 @@ class CInputCapturePortal {
     } m_sState;
 
     struct SSession {
-        SSession(sdbus::ObjectPath requestHandle, sdbus::ObjectPath sessionHandle, std::string sessionId, uint32_t capabilities, wl_proxy* proxy);
+        SSession(sdbus::ObjectPath sessionHandle, std::string sessionId, uint32_t capabilities, wl_proxy* proxy);
+        void setRequest(sdbus::ObjectPath requestHandle);
 
         sdbus::ObjectPath                      requestHandle, sessionHandle;
         std::string                            sessionId;
         uint32_t                               capabilities = 0;
         int32_t                                eisFD        = -1;
         bool                                   dead         = false;
+        bool                                   started      = false;
         std::unordered_map<uint32_t, uint32_t> barrierIdMap;
 
         //
@@ -59,6 +62,9 @@ class CInputCapturePortal {
     //
     dbUasv        onCreateSession(sdbus::ObjectPath requestHandle, sdbus::ObjectPath sessionHandle, std::string appID, std::string parentWindow,
                                   std::unordered_map<std::string, sdbus::Variant> options);
+    std::unordered_map<std::string, sdbus::Variant> onCreateSession2(sdbus::ObjectPath sessionHandle, std::string appID, std::unordered_map<std::string, sdbus::Variant> options);
+    dbUasv        onStart(sdbus::ObjectPath requestHandle, sdbus::ObjectPath sessionHandle, std::string appID, std::string parentWindow,
+                          std::unordered_map<std::string, sdbus::Variant> options);
     dbUasv        onGetZones(sdbus::ObjectPath requestHandle, sdbus::ObjectPath sessionHandle, std::string appID, std::unordered_map<std::string, sdbus::Variant> opts);
     dbUasv        onSetPointerBarriers(sdbus::ObjectPath requestHandle, sdbus::ObjectPath sessionHandle, std::string appID, std::unordered_map<std::string, sdbus::Variant> opts,
                                        std::vector<std::unordered_map<std::string, sdbus::Variant>> barriers, uint32_t zoneSet);

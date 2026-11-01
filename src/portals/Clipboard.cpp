@@ -54,10 +54,11 @@ CClipboardPortal::CClipboardPortal(SP<CCExtDataControlManagerV1> mgr) {
 void CClipboardPortal::onRequestClipboard(sdbus::ObjectPath sessionHandle, std::unordered_map<std::string, sdbus::Variant> opts) {
     Debug::log(LOG, "[clipboard] RequestClipboard for {}", sessionHandle.c_str());
 
-    // only remote desktop sessions take the clipboard, which they get as they start
+    // only remote desktop and input capture sessions take the clipboard, which they get as they start
     const auto& REMOTEDESKTOP = g_pPortalManager->m_sPortals.remoteDesktop;
-    if (!REMOTEDESKTOP || !REMOTEDESKTOP->m_mSessions.contains(sessionHandle))
-        fail("NotFound", std::format("No remote desktop session {}", sessionHandle.c_str()));
+    const auto& INPUTCAPTURE  = g_pPortalManager->m_sPortals.inputCapture;
+    if ((!REMOTEDESKTOP || !REMOTEDESKTOP->m_mSessions.contains(sessionHandle)) && (!INPUTCAPTURE || !INPUTCAPTURE->hasSession(sessionHandle)))
+        fail("NotFound", std::format("No remote desktop or input capture session {}", sessionHandle.c_str()));
 
     if (!m_mSessions.contains(sessionHandle))
         m_mSessions.emplace(sessionHandle, makeShared<SSession>(SSession{.sessionHandle = sessionHandle}));
