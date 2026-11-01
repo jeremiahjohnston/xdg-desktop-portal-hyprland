@@ -12,6 +12,9 @@
     throw sdbus::Error{sdbus::Error::Name{"org.freedesktop.portal.Error." + error}, message};
 }
 
+// how long a session has to start writing what was requested from it
+constexpr float TRANSFER_TIMEOUT_MS = 2000;
+
 // for objects dropped from within their own events, which aren't safe to destroy until the next loop
 template <typename T>
 static void destroyLater(SP<T>&& object) {
@@ -103,6 +106,14 @@ void CClipboardPortal::onSetSelection(sdbus::ObjectPath sessionHandle, std::unor
         const auto SERIAL = PSESSION->transfers.add(std::move(transferFd));
         Debug::log(TRACE, "[clipboard] Transfer {} of {} from session {}", SERIAL, mimeType, PSESSION->sessionHandle.c_str());
         m_pObject->emitSignal("SelectionTransfer").onInterface(INTERFACE_NAME).withArguments(PSESSION->sessionHandle, std::string{mimeType}, SERIAL);
+
+        // a session can leave a transfer unanswered, Synergy does while input is captured. Whoever reads the clipboard
+        // would wait on it forever, so it ends empty unless the session has taken it by then
+        g_pPortalManager->addTimer({TRANSFER_TIMEOUT_MS, [WEAKSESSION, SERIAL]() {
+                                        const auto PSESSION = WEAKSESSION.lock();
+                                        if (PSESSION && PSESSION->transfers.take(SERIAL))
+                                            Debug::log(LOG, "[clipboard] Transfer {} from session {} went unanswered", SERIAL, PSESSION->sessionHandle.c_str());
+                                    }});
     });
     SOURCE->setCancelled([WEAKSESSION](CCExtDataControlSourceV1* source) {
         // something else took the selection
