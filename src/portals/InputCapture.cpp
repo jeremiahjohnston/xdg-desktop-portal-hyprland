@@ -203,6 +203,11 @@ CInputCapturePortal::CInputCapturePortal(SP<CCHyprlandInputCaptureManagerV1> mgr
                 .implementedAs([this](sdbus::ObjectPath o1, sdbus::ObjectPath o2, std::string s1, std::string s2, std::unordered_map<std::string, sdbus::Variant> m) {
                     return onCreateSession(o1, o2, s1, s2, m);
                 }),
+            sdbus::registerMethod("CreateSession2").implementedAs([this](sdbus::ObjectPath o, std::string s, std::unordered_map<std::string, sdbus::Variant> m) {
+                return onCreateSession2(o, s, m);
+            }),
+            sdbus::registerMethod("Start").implementedAs([this](sdbus::ObjectPath o1, sdbus::ObjectPath o2, std::string s1, std::string s2,
+                                                                std::unordered_map<std::string, sdbus::Variant> m) { return onStart(o1, o2, s1, s2, m); }),
             sdbus::registerMethod("GetZones").implementedAs([this](sdbus::ObjectPath o1, sdbus::ObjectPath o2, std::string s, std::unordered_map<std::string, sdbus::Variant> m) {
                 return onGetZones(o1, o2, s, m);
             }),
@@ -221,7 +226,7 @@ CInputCapturePortal::CInputCapturePortal(SP<CCHyprlandInputCaptureManagerV1> mgr
                 return onConnectToEIS(o, s, m);
             }),
             sdbus::registerProperty("SupportedCapabilities").withGetter([] { return (uint32_t)(1 | 2); }),
-            sdbus::registerProperty("version").withGetter([] { return (uint32_t)(1); }),
+            sdbus::registerProperty("version").withGetter([] { return (uint32_t)(2); }),
             sdbus::registerSignal("Activated").withParameters<sdbus::ObjectPath, std::unordered_map<std::string, sdbus::Variant>>(),
             sdbus::registerSignal("Disabled").withParameters<sdbus::ObjectPath, std::unordered_map<std::string, sdbus::Variant>>(),
             sdbus::registerSignal("Deactivated").withParameters<sdbus::ObjectPath, std::unordered_map<std::string, sdbus::Variant>>(),
@@ -261,8 +266,9 @@ dbUasv CInputCapturePortal::onCreateSession(sdbus::ObjectPath requestHandle, sdb
     std::string sessionId = "input-capture-" + std::to_string(m_sessionCounter++);
     Debug::log(LOG, "[input-capture]  | sessionId : {}", sessionId);
 
-    const std::shared_ptr<SSession> session =
-        std::make_shared<SSession>(requestHandle, sessionHandle, sessionId, capabilities, m_sState.manager->sendCreateSession(sessionId.c_str()));
+    const std::shared_ptr<SSession> session = std::make_shared<SSession>(sessionHandle, sessionId, capabilities, m_sState.manager->sendCreateSession(sessionId.c_str()));
+    session->setRequest(requestHandle);
+    session->started = true;
 
     m_sessions.emplace(sessionHandle, session);
 
@@ -272,20 +278,89 @@ dbUasv CInputCapturePortal::onCreateSession(sdbus::ObjectPath requestHandle, sdb
     return {0, results};
 }
 
-CInputCapturePortal::SSession::SSession(sdbus::ObjectPath requestHandle_, sdbus::ObjectPath sessionHandle_, std::string sessionId_, uint32_t capabilities_, wl_proxy* proxy) :
-    requestHandle(requestHandle_), sessionHandle(sessionHandle_), sessionId(sessionId_), capabilities(capabilities_), whandle(std::make_unique<CCHyprlandInputCaptureV1>(proxy)) {
+// the session isn't started yet, the frontend asks for the clipboard in between
+std::unordered_map<std::string, sdbus::Variant> CInputCapturePortal::onCreateSession2(sdbus::ObjectPath sessionHandle, std::string appID,
+                                                                                      std::unordered_map<std::string, sdbus::Variant> options) {
+    Debug::log(LOG, "[input-capture] New session (v2):");
+    Debug::log(LOG, "[input-capture]  | {}", sessionHandle.c_str());
+    Debug::log(LOG, "[input-capture]  | appid: {}", appID);
+
+    std::string sessionId = "input-capture-" + std::to_string(m_sessionCounter++);
+    Debug::log(LOG, "[input-capture]  | sessionId : {}", sessionId);
+
+    m_sessions.emplace(sessionHandle, std::make_shared<SSession>(sessionHandle, sessionId, 0, m_sState.manager->sendCreateSession(sessionId.c_str())));
+
+    return {};
+}
+
+dbUasv CInputCapturePortal::onStart(sdbus::ObjectPath requestHandle, sdbus::ObjectPath sessionHandle, std::string appID, std::string parentWindow,
+                                    std::unordered_map<std::string, sdbus::Variant> options) {
+    Debug::log(LOG, "[input-capture] Start request:");
+    Debug::log(LOG, "[input-capture]  | {}", requestHandle.c_str());
+    Debug::log(LOG, "[input-capture]  | {}", sessionHandle.c_str());
+
+    if (!sessionValid(sessionHandle))
+        return {2, {}};
+
+    const auto SESSION = m_sessions[sessionHandle];
+    if (SESSION->started) {
+        Debug::log(WARN, "[input-capture] Session {} was already started", sessionHandle.c_str());
+        return {2, {}};
+    }
+
+    uint32_t capabilities = 0;
+    if (const auto IT = options.find("capabilities"); IT != options.end() && IT->second.containsValueOfType<uint32_t>())
+        capabilities = IT->second.get<uint32_t>();
+
+    // keyboard and pointer are all there is to capture
+    capabilities &= 3;
+    if (capabilities == 0) {
+        Debug::log(WARN, "[input-capture] Session {} requested no capabilities we support", sessionHandle.c_str());
+        return {2, {}};
+    }
+
+    Debug::log(LOG, "[input-capture]  | capabilities : {}", capabilities);
+
+    SESSION->setRequest(requestHandle);
+    SESSION->capabilities = capabilities;
+    SESSION->started      = true;
+
+    std::unordered_map<std::string, sdbus::Variant> results;
+    results["capabilities"] = sdbus::Variant{capabilities};
+
+    // the clipboard, when it was requested with this session
+    const auto& CLIPBOARD        = g_pPortalManager->m_sPortals.clipboard;
+    results["clipboard_enabled"] = sdbus::Variant{CLIPBOARD && CLIPBOARD->enableSession(sessionHandle)};
+
+    // nothing to prompt for, so there's no restore_data for the frontend to keep
+
+    return {0, results};
+}
+
+void CInputCapturePortal::SSession::setRequest(sdbus::ObjectPath requestHandle_) {
+    requestHandle      = requestHandle_;
+    request            = createDBusRequest(requestHandle);
+    request->onDestroy = [this]() { request.release(); };
+}
+
+bool CInputCapturePortal::hasSession(const sdbus::ObjectPath& sessionHandle) const {
+    const auto IT = m_sessions.find(sessionHandle);
+    return IT != m_sessions.end() && !IT->second->dead;
+}
+
+CInputCapturePortal::SSession::SSession(sdbus::ObjectPath sessionHandle_, std::string sessionId_, uint32_t capabilities_, wl_proxy* proxy) :
+    sessionHandle(sessionHandle_), sessionId(sessionId_), capabilities(capabilities_), whandle(std::make_unique<CCHyprlandInputCaptureV1>(proxy)) {
 
     session            = createDBusSession(sessionHandle);
     session->onDestroy = [this]() {
+        if (g_pPortalManager->m_sPortals.clipboard)
+            g_pPortalManager->m_sPortals.clipboard->removeSession(sessionHandle);
         whandle->sendDisable();
         Debug::log(LOG, "[input-capture] Session {} destroyed", sessionHandle.c_str());
         session.release();
         whandle.reset();
         dead = true;
     };
-
-    request            = createDBusRequest(requestHandle);
-    request->onDestroy = [this]() { request.release(); };
 
     whandle->setActivated([this](CCHyprlandInputCaptureV1*, uint32_t activationId, wl_fixed_t x, wl_fixed_t y, uint32_t borderId) {
         g_pPortalManager->m_sPortals.inputCapture->activate(sessionHandle, activationId, x, y, borderId);

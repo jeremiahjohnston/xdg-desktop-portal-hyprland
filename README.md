@@ -41,6 +41,14 @@ told when it changes, and put their own content on it for apps to paste.
 It shares the seat's clipboard through `ext_data_control_manager_v1`, which
 Hyprland has. Without it, the clipboard isn't enabled for any session.
 
+### `inputcapture-clipboard`
+
+Extends the Clipboard portal to input capture sessions, for apps like Synergy
+that capture this machine's input and share its clipboard. This takes version 2
+of `org.freedesktop.impl.portal.InputCapture` (`CreateSession2` and `Start`),
+because `xdg-desktop-portal` only allows the clipboard from that version on. It's
+based on the `remotedesktop-base` branch, which keeps the commit it builds on.
+
 ## Installing
 
 First, make sure to install the required dependencies:
