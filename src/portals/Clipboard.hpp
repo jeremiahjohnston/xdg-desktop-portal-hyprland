@@ -3,6 +3,9 @@
 #include <sdbus-c++/sdbus-c++.h>
 #include "../includes.hpp"
 #include "../shared/ClipboardTransfers.hpp"
+#include <optional>
+#include <string>
+#include <vector>
 
 struct wl_proxy;
 class CCExtDataControlManagerV1;
@@ -24,6 +27,8 @@ class CClipboardPortal {
     // a session that requested the clipboard gets it as it starts, returns whether it did
     bool enableSession(const sdbus::ObjectPath& sessionHandle);
     void removeSession(const sdbus::ObjectPath& sessionHandle);
+    // an input capture session released input, so it answers for the clipboard again
+    void onCaptureEnded(const sdbus::ObjectPath& sessionHandle);
 
   private:
     struct SSession {
@@ -32,6 +37,8 @@ class CClipboardPortal {
         // what the session offers while it owns the selection
         SP<CCExtDataControlSourceV1> source;
         CClipboardTransfers          transfers;
+        // the selection it set while it had input captured, which goes on the seat once it's released
+        std::optional<std::vector<std::string>> heldMimeTypes;
     };
 
     struct SOffer {
@@ -40,6 +47,7 @@ class CClipboardPortal {
     };
 
     SP<SSession> getEnabledSession(const sdbus::ObjectPath& sessionHandle);
+    void         setSelection(const SP<SSession>& session, const std::vector<std::string>& mimeTypes);
     void         onDataOffer(wl_proxy* offer);
     void         onSelection(wl_proxy* offer);
     void         emitOwnerChanged(const SSession& session);

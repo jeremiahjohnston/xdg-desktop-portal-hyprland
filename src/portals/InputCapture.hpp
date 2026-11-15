@@ -28,6 +28,8 @@ class CInputCapturePortal {
     CInputCapturePortal(SP<CCHyprlandInputCaptureManagerV1> mgr);
     void zonesChanged();
     bool hasSession(const sdbus::ObjectPath& sessionHandle) const;
+    // whether the session has input captured, from its activation until it's released or deactivated
+    bool isCapturing(const sdbus::ObjectPath& sessionHandle) const;
 
   private:
     struct {
@@ -44,6 +46,7 @@ class CInputCapturePortal {
         int32_t                                eisFD        = -1;
         bool                                   dead         = false;
         bool                                   started      = false;
+        bool                                   capturing    = false;
         std::unordered_map<uint32_t, uint32_t> barrierIdMap;
 
         //
@@ -78,5 +81,6 @@ class CInputCapturePortal {
 
     void          activate(sdbus::ObjectPath sessionHandle, uint32_t activationId, double x, double y, uint32_t borderId);
     void          deactivate(sdbus::ObjectPath sessionHandle, uint32_t activationId);
+    void          endCapture(const sdbus::ObjectPath& sessionHandle);
     void          disable(sdbus::ObjectPath sessionHandle);
 };

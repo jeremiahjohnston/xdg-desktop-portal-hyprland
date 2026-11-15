@@ -348,6 +348,11 @@ bool CInputCapturePortal::hasSession(const sdbus::ObjectPath& sessionHandle) con
     return IT != m_sessions.end() && !IT->second->dead;
 }
 
+bool CInputCapturePortal::isCapturing(const sdbus::ObjectPath& sessionHandle) const {
+    const auto IT = m_sessions.find(sessionHandle);
+    return IT != m_sessions.end() && !IT->second->dead && IT->second->capturing;
+}
+
 CInputCapturePortal::SSession::SSession(sdbus::ObjectPath sessionHandle_, std::string sessionId_, uint32_t capabilities_, wl_proxy* proxy) :
     sessionHandle(sessionHandle_), sessionId(sessionId_), capabilities(capabilities_), whandle(std::make_unique<CCHyprlandInputCaptureV1>(proxy)) {
 
@@ -548,6 +553,7 @@ dbUasv CInputCapturePortal::onRelease(sdbus::ObjectPath sessionHandle, std::stri
         } catch (std::exception& e) { Debug::log(WARN, "[input-capture] invalid cursor_position: {}", e.what()); }
     }
     m_sessions[sessionHandle]->whandle->sendRelease(activationId, x, y); //TODO: send pointer position for warping
+    endCapture(sessionHandle);
 
     return {0, {}};
 }
@@ -606,7 +612,8 @@ void CInputCapturePortal::activate(sdbus::ObjectPath sessionHandle, uint32_t act
     if (!sessionValid(sessionHandle))
         return;
 
-    const auto&    session         = m_sessions[sessionHandle];
+    const auto& session            = m_sessions[sessionHandle];
+    session->capturing             = true;
     const auto     mappedBarrierId = session->barrierIdMap.find(borderId);
     const uint32_t clientBarrierId = mappedBarrierId != session->barrierIdMap.end() ? mappedBarrierId->second : borderId;
 
@@ -625,6 +632,18 @@ void CInputCapturePortal::deactivate(sdbus::ObjectPath sessionHandle, uint32_t a
     std::unordered_map<std::string, sdbus::Variant> options;
     options["activation_id"] = sdbus::Variant{activationId};
     m_pObject->emitSignal("Deactivated").onInterface(INTERFACE_NAME).withArguments(sessionHandle, options);
+    endCapture(sessionHandle);
+}
+
+void CInputCapturePortal::endCapture(const sdbus::ObjectPath& sessionHandle) {
+    if (!isCapturing(sessionHandle))
+        return;
+
+    m_sessions[sessionHandle]->capturing = false;
+
+    // the clipboard the session set while it had input captured goes on the seat now, when the session answers for it
+    if (g_pPortalManager->m_sPortals.clipboard)
+        g_pPortalManager->m_sPortals.clipboard->onCaptureEnded(sessionHandle);
 }
 
 void CInputCapturePortal::disable(sdbus::ObjectPath sessionHandle) {

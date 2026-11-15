@@ -81,6 +81,35 @@ void CClipboardPortal::onSetSelection(sdbus::ObjectPath sessionHandle, std::unor
 
     Debug::log(LOG, "[clipboard] Session {} sets the selection with {} mime types", sessionHandle.c_str(), mimeTypes.size());
 
+    // Synergy doesn't answer transfers while it has input captured, so a clipboard manager reading the new selection
+    // straight away (wl-clip-persist) would get nothing and keep that. It goes on the seat once input is released.
+    const auto& INPUTCAPTURE = g_pPortalManager->m_sPortals.inputCapture;
+    if (INPUTCAPTURE && INPUTCAPTURE->isCapturing(sessionHandle)) {
+        Debug::log(LOG, "[clipboard] Session {} has input captured, holding its selection until it's released", sessionHandle.c_str());
+        PSESSION->heldMimeTypes = std::move(mimeTypes);
+        return;
+    }
+
+    PSESSION->heldMimeTypes.reset();
+    setSelection(PSESSION, mimeTypes);
+}
+
+void CClipboardPortal::onCaptureEnded(const sdbus::ObjectPath& sessionHandle) {
+    const auto PSESSION = getEnabledSession(sessionHandle);
+    if (!PSESSION || !PSESSION->heldMimeTypes)
+        return;
+
+    const auto MIMETYPES = std::move(*PSESSION->heldMimeTypes);
+    PSESSION->heldMimeTypes.reset();
+
+    if (!m_sState.device)
+        return;
+
+    Debug::log(LOG, "[clipboard] Session {} released input, setting its held selection", sessionHandle.c_str());
+    setSelection(PSESSION, MIMETYPES);
+}
+
+void CClipboardPortal::setSelection(const SP<SSession>& PSESSION, const std::vector<std::string>& mimeTypes) {
     if (mimeTypes.empty()) {
         // offering nothing takes the session's content off the clipboard
         if (PSESSION->source) {
