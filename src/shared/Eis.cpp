@@ -1,7 +1,7 @@
 #include "Eis.hpp"
 #include "../core/PortalManager.hpp"
 #include "../helpers/MiscFunctions.hpp"
-#include "src/helpers/Log.hpp"
+#include "../helpers/Log.hpp"
 #include <algorithm>
 #include <alloca.h>
 #include <cmath>
